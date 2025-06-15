@@ -24,9 +24,10 @@ class CarRacingEnv(gym.Wrapper):
         stack_frames=4,
         initial_no_op=50,
         render_mode="rgb_array",
+        continuous=False,
         **kwargs
     ):
-        env = gym.make(env_id, render_mode=render_mode, continuous=False, **kwargs)
+        env = gym.make(env_id, render_mode=render_mode, continuous=continuous, **kwargs)
         super(CarRacingEnv, self).__init__(env)
         self.initial_no_op = initial_no_op
         self.skip_frames = skip_frames
