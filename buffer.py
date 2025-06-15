@@ -1,111 +1,431 @@
-import numpy as np
+"""
+heavily borrowed from 
+https://github.com/DLR-RM/stable-baselines3/blob/master/stable_baselines3/common/buffers.py
+"""
 
-class ReplayBuffer:
-    def __init__(self, state_dim, action_dim, max_size=int(1e5)):
-        """
-        Args:
-            state_dim (tuple): State shape, e.g., (4, 84, 84)
-            action_dim (int or tuple): Action shape (usually scalar for discrete actions)
-            max_size (int): Maximum buffer size
-        """
-        self.max_size = max_size
-        self.ptr = 0
-        self.size = 0
 
-        self.s = np.zeros((max_size, *state_dim), dtype=np.float32)
-        self.a = np.zeros((max_size, *action_dim) if isinstance(action_dim, tuple) else (max_size, 1), dtype=np.int64)
-        self.r = np.zeros((max_size, 1), dtype=np.float32)
-        self.s_prime = np.zeros((max_size, *state_dim), dtype=np.float32)
-        self.terminated = np.zeros((max_size, 1), dtype=np.float32)
+import warnings
+from abc import ABC, abstractmethod
+from typing import Any, Optional, Union, NamedTuple
+
+import numpy as np 
+import torch 
+from gymnasium import spaces
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+
+class ReplayBufferSamples(NamedTuple):
+    observations: torch.Tensor
+    actions: torch.Tensor
+    next_observations: torch.Tensor
+    dones: torch.Tensor
+    rewards: torch.Tensor
+
+
+def get_action_dim(action_space: spaces.Space) -> int:
+    """
+    Get the dimension of the action space.
+
+    :param action_space:
+    :return:
+    """
+    if isinstance(action_space, spaces.Box):
+        return int(np.prod(action_space.shape))
+    elif isinstance(action_space, spaces.Discrete):
+        # Action is an int
+        return 1
+    elif isinstance(action_space, spaces.MultiDiscrete):
+        # Number of discrete actions
+        return len(action_space.nvec)
+    elif isinstance(action_space, spaces.MultiBinary):
+        # Number of binary actions
+        assert isinstance(
+            action_space.n, int
+        ), f"Multi-dimensional MultiBinary({action_space.n}) action space is not supported. You can flatten it instead."
+        return int(action_space.n)
+    else:
+        raise NotImplementedError(f"{action_space} action space is not supported")
+    
+
+def get_obs_shape(
+    observation_space: spaces.Space,
+) -> Union[tuple[int, ...], dict[str, tuple[int, ...]]]:
+    """
+    Get the shape of the observation (useful for the buffers).
+
+    :param observation_space:
+    :return:
+    """
+    if isinstance(observation_space, spaces.Box):
+        return observation_space.shape
+    elif isinstance(observation_space, spaces.Discrete):
+        # Observation is an int
+        return (1,)
+    elif isinstance(observation_space, spaces.MultiDiscrete):
+        # Number of discrete features
+        return (len(observation_space.nvec),)
+    elif isinstance(observation_space, spaces.MultiBinary):
+        # Number of binary features
+        return observation_space.shape
+    elif isinstance(observation_space, spaces.Dict):
+        return {key: get_obs_shape(subspace) for (key, subspace) in observation_space.spaces.items()}  # type: ignore[misc]
+
+    else:
+        raise NotImplementedError(f"{observation_space} observation space is not supported")
+    
+
+def get_device(device: Union[torch.device, str] = "auto") -> torch.device:
+    """
+    Retrieve PyTorch device.
+    It checks that the requested device is available first.
+    For now, it supports only cpu and cuda.
+    By default, it tries to use the gpu.
+
+    :param device: One for 'auto', 'cuda', 'cpu'
+    :return: Supported Pytorch device
+    """
+    # Cuda by default
+    if device == "auto":
+        device = "cuda"
+    # Force conversion to th.device
+    device = torch.device(device)
+
+    # Cuda not available
+    if device.type == torch.device("cuda").type and not torch.cuda.is_available():
+        return torch.device("cpu")
+
+    return device
+
+
+class BaseBuffer(ABC):
+    """
+    Base class that represent a buffer (rollout or replay)
+
+    :param buffer_size: Max number of element in the buffer
+    :param observation_space: Observation space
+    :param action_space: Action space
+    :param device: PyTorch device
+        to which the values will be converted
+    :param n_envs: Number of parallel environments
+    """
+
+    observation_space: spaces.Space
+    obs_shape: tuple[int, ...]
+
+    def __init__(
+        self,
+        buffer_size: int,
+        observation_space: spaces.Space,
+        action_space: spaces.Space,
+        device: Union[torch.device, str] = "auto",
+        n_envs: int = 1,
+    ):
+        super().__init__()
+        self.buffer_size = buffer_size
+        self.observation_space = observation_space
+        self.action_space = action_space
+        self.obs_shape = get_obs_shape(observation_space)  # type: ignore[assignment]
+        self.action_dim = get_action_dim(action_space)
+        self.pos = 0
+        self.full = False
+        self.device = get_device(device)
+        self.n_envs = n_envs
+
+    def size(self) -> int:
+        """
+        :return: The current size of the buffer
+        """
+        if self.full:
+            return self.buffer_size
+        return self.pos
+    
+    @abstractmethod
+    def add(self, *args, **kwargs) -> None:
+        """
+        Add elements to the buffer.
+        """
+        raise NotImplementedError()
+
+    def reset(self) -> None:
+        """
+        Reset the buffer.
+        """
+        self.pos = 0
+        self.full = False
+
+    @staticmethod
+    def swap_and_flatten(arr: np.ndarray) -> np.ndarray:
+        """
+        Swap and then flatten axes 0 
+        """
+        shape = arr.shape
+        if len(shape) < 3:
+            shape (*shape, 1)
+        return arr.swapaxes(0, 1).reshape(shape[0] * shape[1], *shape[2:])
+
+    @abstractmethod
+    def sample(self, batch_size: int, env: Optional[Any] = None):
+        """
+        :param batch_size: Number of element to sample
+        :param env: associated gym VecEnv
+            to normalize the observations/rewards when sampling
+        :return:
+        """
+        raise NotImplementedError()
+
+    def to_torch(self, array: np.ndarray, copy: bool = True) -> torch.Tensor:
+        """
+        Convert a numpy array to a PyTorch tensor.
+        Note: it copies the data by default
+
+        :param array:
+        :param copy: Whether to copy or not the data (may be useful to avoid changing things
+            by reference). This argument is inoperative if the device is not the CPU.
+        :return:
+        """
+        if copy:
+            return torch.tensor(array, device=self.device)
+        return torch.as_tensor(array, device=self.device)
+
+
+class ReplayBuffer(BaseBuffer):
+    """
+    Replay buffer used in off-policy algorithms like SAC/TD3.
+
+    :param buffer_size: Max number of element in the buffer
+    :param observation_space: Observation space
+    :param action_space: Action space
+    :param device: PyTorch device
+    :param n_envs: Number of parallel environments
+    :param optimize_memory_usage: Enable a memory efficient variant
+        of the replay buffer which reduces by almost a factor two the memory used,
+        at a cost of more complexity.
+    :param handle_timeout_termination: Handle timeout termination (due to timelimit)
+        separately and treat the task as infinite horizon task.
+
+    """
+    def __init__(
+        self,
+        buffer_size: int,
+        observation_space: spaces.Space,
+        action_space: spaces.Space,
+        device: Union[torch.device, str] = "auto",
+        n_envs: int = 1,
+        optimize_memory_usage: bool = False,
+        handle_timeout_termination: bool = True
+    ):
+        super().__init__(
+            buffer_size, observation_space, action_space, device, n_envs=n_envs)
+
+        self.buffer_size = max(buffer_size // n_envs, 1)
+        self.optimize_memory_usage = optimize_memory_usage
+
+        # Check that the replay buffer can fit into the memory
+        if psutil is not None:
+            mem_available = psutil.virtual_memory().available
+
+        self.observations = np.zeros(
+            (self.buffer_size, self.n_envs, *self.obs_shape), dtype=np.float32)
+
+        if not optimize_memory_usage:
+            # When optimizing memory, `observations` contains also the next observation
+            self.next_observations = np.zeros(
+                (self.buffer_size, self.n_envs, *self.obs_shape), dtype=np.float32)
+
+        self.actions = np.zeros(
+            (self.buffer_size, self.n_envs, self.action_dim),
+            dtype=np.int64 if isinstance(action_space, spaces.Discrete) else np.float32
+        )
+
+        self.rewards = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.dones = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+
+        if handle_timeout_termination:
+            self.timeouts = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        
+        if psutil is not None:
+            total_memory_usage: float = (
+                self.observations.nbytes + self.actions.nbytes + self.rewards.nbytes + self.dones.nbytes
+            )
+
+            if not optimize_memory_usage:
+                total_memory_usage += self.next_observations.nbytes
+
+            if total_memory_usage > mem_available:
+                # Convert to GB
+                total_memory_usage /= 1e9
+                mem_available /= 1e9
+                warnings.warn(
+                    "This system does not have apparently enough memory to store the complete "
+                    f"replay buffer {total_memory_usage:.2f}GB > {mem_available:.2f}GB"
+                )
+
+    def add(
+        self,
+        obs: np.ndarray,
+        next_obs: np.ndarray,
+        action: np.ndarray,
+        reward: np.ndarray,
+        done: np.ndarray,
+        infos: list[dict[str, Any]],
+    ) -> None:
+        # Reshape needed when using multiple envs with discrete observations
+        # as numpy cannot broadcast (n_discrete,) to (n_discrete, 1)
+        if isinstance(self.observation_space, spaces.Discrete):
+            obs = obs.reshape((self.n_envs, *self.obs_shape))
+            next_obs = next_obs.reshape((self.n_envs, *self.obs_shape))
+
+        # Reshape to handle multi-dim and discrete action spaces, see GH #970 #1392
+        action = action.reshape((self.n_envs, self.action_dim))
+
+        # Copy to avoid modification by reference
+        self.observations[self.pos] = np.array(obs).copy()
+
+        if self.optimize_memory_usage:
+            self.observations[(self.pos + 1) % self.buffer_size] = np.array(next_obs).copy()
+        else:
+            self.next_observations[self.pos] = np.array(next_obs).copy()
+
+        self.actions[self.pos] = np.array(action).copy()
+        self.rewards[self.pos] = np.array(reward).copy()
+        self.dones[self.pos] = np.array(done).copy()
+
+        if hasattr(self, 'timeouts') and infos is not None:
+            timeouts = np.array([info.get("TimeLimit.truncated", False) for info in infos])
+            self.timeouts[self.pos] = timeouts.copy()
+
+        self.pos += 1
+        if self.pos == self.buffer_size:
+            self.full = True
+            self.pos = 0
+
+    def sample(self, batch_size: int, env: Optional[Any] = None) -> ReplayBufferSamples:
+        """
+        Sample elements from the replay buffer.
+        Custom sampling when using memory efficient variant,
+        as we should not sample the element with index `self.pos`
+        See https://github.com/DLR-RM/stable-baselines3/pull/28#issuecomment-637559274
+
+        :param batch_size: Number of element to sample
+        :param env: associated gym VecEnv
+            to normalize the observations/rewards when sampling
+        :return:
+        """
+        if not self.optimize_memory_usage:
+            return self._sample_proportional(batch_size, env)
+
+        if self.full:
+            batch_inds = (np.random.randint(1, self.buffer_size, size=batch_size) + self.pos) % self.buffer_size
+        else:
+            batch_inds = np.random.randint(0, self.pos, size=batch_size)
+        return self._get_samples(batch_inds, env=env)
+    
+    def _sample_proportional(self, batch_size: int, env: Optional[Any] = None) -> ReplayBufferSamples:
+        batch_inds = np.random.randint(0, self.size(), size=batch_size)
+        return self._get_samples(batch_inds, env=env)
+
+    def _get_samples(self, batch_inds: np.ndarray, env: Optional[Any] = None) -> ReplayBufferSamples:
+        # Sample randomly the env idx
+        env_indices = np.random.randint(0, high=self.n_envs, size=(len(batch_inds),))
+
+        if self.optimize_memory_usage:
+            next_obs = self._get_next_obs_optimized(batch_inds, env_indices)
+        else:
+            next_obs = self.next_observations[batch_inds, env_indices, :]
+
+        obs = self.observations[batch_inds, env_indices, :]
+
+        if isinstance(self.action_space, spaces.Discrete):
+            actions = self.actions[batch_inds, env_indices].reshape(-1, 1)
+        else:
+            actions = self.actions[batch_inds, env_indices, :]
+
+        if hasattr(self, 'timeouts'):
+            dones = (self.dones[batch_inds, env_indices] * (1 - self.timeouts[batch_inds, env_indices])).reshape(-1, 1)
+        else:
+            dones = self.dones[batch_inds, env_indices].reshape(-1, 1)
+
+        rewards = self.rewards[batch_inds, env_indices].reshape(-1, 1)
+
+        data = (obs, actions, next_obs, dones, rewards)
+        return ReplayBufferSamples(*tuple(map(self.to_torch, data)))
+
+    def _get_next_obs_optimized(self, batch_inds: np.ndarray, env_indices: np.ndarray) -> np.ndarray:
+        """
+        Get next Observation when using memory optimized variants
+        """
+        next_obs = self.observations[(batch_inds + 1) % self.buffer_size, env_indices, :]
+
+        for i, (batch_idx, env_idx) in enumerate(zip(batch_inds, env_indices)):
+            if self.dones[batch_idx, env_idx]:
+                next_obs[i] = self.observations[batch_idx, env_idx]
+        return next_obs
+    
+    def __len__(self) -> int:
+        return self.size()
 
     def update(self, s, a, r, s_prime, terminated):
         """
-        Store a transition in the buffer.
+        Legacy Method for compatibility. Use add() instead
+        Store a transition in the buffer
         """
-        self.s[self.ptr] = s
-        self.a[self.ptr] = a
-        self.r[self.ptr] = r
-        self.s_prime[self.ptr] = s_prime
-        self.terminated[self.ptr] = terminated
-
-        self.ptr = (self.ptr + 1) % self.max_size
-        self.size = min(self.size + 1, self.max_size)
-
-    def sample(self, batch_size):
-        """
-        Sample a batch of transitions.
-        Returns:
-            tuple of tensors: (states, actions, rewards, next_states, dones)
-        """
-        ind = np.random.randint(0, self.size, size=batch_size)
-        return (self.s[ind],self.a[ind],self.r[ind],self.s_prime[ind],self.terminated[ind],)
-
-    def __len__(self):
-        return self.size
-
-class PrioritizedReplayBuffer:
-    def __init__(self, state_dim, action_dim, max_size=int(1e5), alpha=0.6, beta=0.4, beta_anneal_steps=1e5, eps=1e-6):
-        self.max_size = max_size
-        self.ptr = 0
-        self.size = 0
-
-        self.alpha = alpha
-        self.beta = beta
-        self.beta_anneal = (1.0 - beta) / beta_anneal_steps
-        self.eps = eps
-
-        self.priorities = np.zeros((max_size,), dtype=np.float32)
-
-        self.s = np.zeros((max_size, *state_dim), dtype=np.float32)
-        self.a = np.zeros((max_size, 1), dtype=np.int64)
-        self.r = np.zeros((max_size, 1), dtype=np.float32)
-        self.s_prime = np.zeros((max_size, *state_dim), dtype=np.float32)
-        self.terminated = np.zeros((max_size, 1), dtype=np.float32)
-
-    def update(self, s, a, r, s_prime, terminated, td_error=None):
-        idx = self.ptr
-        self.s[idx] = s
-        self.a[idx] = a
-        self.r[idx] = r
-        self.s_prime[idx] = s_prime
-        self.terminated[idx] = terminated
-
-        if td_error is None:
-            priority = 1.0  # maximum priority on new samples
+        if isinstance(s, np.ndarray) and s.ndim == len(self.obs_shape):
+            obs = s[np.newaxis]
+            next_obs = s_prime[np.newaxis]
+            actions = np.array([a])
+            rewards = np.array([r])
+            dones = np.array([terminated])
+            infos = [{}]
         else:
-            priority = (abs(td_error) + self.eps) ** self.alpha
-        self.priorities[idx] = priority
+            obs = np.array(s)
+            next_obs = np.array(s_prime)
+            actions = np.array(a)
+            rewards = np.array(r)
+            dones = np.array(terminated)
+            infos = None
 
-        self.ptr = (self.ptr + 1) % self.max_size
-        self.size = min(self.size + 1, self.max_size)
+        self.add(obs, next_obs, actions, rewards, dones, infos)
 
-    def sample(self, batch_size):
-        if self.size == 0:
-            raise ValueError("Cannot sample from empty buffer!")
+    def get_memory_usage(self) -> dict:
+        obs_memory = self.observations.nbytes
+        next_obs_memory = self.next_observations.nbytes if hasattr(self, "next_observations") else 0
+        action_memory = self.actions.nbytes
+        rewards_memory = self.rewards.nbytes
+        dones_memory = self.dones.nbytes
+        timeouts_memory = self.timeouts.nbytes if hasattr(self, "timeouts") else 0
 
-        probs = self.priorities[:self.size] + self.eps
-        probs = probs ** self.alpha
-        probs /= probs.sum()
-
-        indices = np.random.choice(self.size, batch_size, p=probs)
-        weights = (1.0 / (self.size * probs[indices])) ** self.beta
-        weights /= weights.max()
-        self.beta = min(1.0, self.beta + self.beta_anneal)
-
-        batch = (
-            self.s[indices],
-            self.a[indices],
-            self.r[indices],
-            self.s_prime[indices],
-            self.terminated[indices],
-            indices,
-            weights.astype(np.float32).reshape(-1, 1),
-        )
-        return batch
-
-    def update_priorities(self, indices, td_errors):
-        for idx, err in zip(indices, td_errors):
-            self.priorities[idx] = (abs(err) + self.eps) ** self.alpha
-
-    def __len__(self):
-        return self.size
+        total_memory = obs_memory + next_obs_memory + action_memory + \
+            rewards_memory + dones_memory + timeouts_memory
+        return {
+            "observations_mb": obs_memory / 1e6,
+            "next_obs_mb": next_obs_memory / 1e6,
+            "action_mb": action_memory / 1e6,
+            "rewards_mb": rewards_memory / 1e6,
+            "dones_mb": dones_memory / 1e6,
+            "timeouts_mb": timeouts_memory / 1e6,
+            "total_mb": total_memory / 1e6,
+            "optimization_enabled": self.optimize_memory_usage,
+            "n_envs": self.n_envs,
+            "buffer_size": self.buffer_size,
+            "current_size": self.size(),
+            "buffer_shape": {
+                "observations": self.observations.shape,
+                "actions": self.actions.shape,
+                "rewards": self.rewards.shape,
+                "dones": self.dones.shape
+            }
+        }
+    
+    def get_env_distribution(self) -> dict:
+        """
+        Get distribution of transitions per environment
+        """
+        current_size = self.size()
+        if current_size == 0: 
+            return {}
+        transitions_per_env = current_size
+        return {f"env_{env_id}": transitions_per_env for env_id in range(self.n_envs)}
