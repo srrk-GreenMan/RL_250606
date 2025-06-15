@@ -11,6 +11,7 @@ from typing import Any, Optional, Union, NamedTuple
 import numpy as np 
 import torch 
 from gymnasium import spaces
+from segment_tree import SumSegmentTree, MinSegmentTree
 
 try:
     import psutil
@@ -24,6 +25,16 @@ class ReplayBufferSamples(NamedTuple):
     next_observations: torch.Tensor
     dones: torch.Tensor
     rewards: torch.Tensor
+
+
+class PrioritizedReplayBufferSamples(NamedTuple):
+    observations: torch.Tensor
+    actions: torch.Tensor
+    next_observations: torch.Tensor
+    dones: torch.Tensor
+    rewards: torch.Tensor
+    weights: torch.Tensor
+    batch_indices: np.ndarray
 
 
 def get_action_dim(action_space: spaces.Space) -> int:
@@ -425,7 +436,104 @@ class ReplayBuffer(BaseBuffer):
         Get distribution of transitions per environment
         """
         current_size = self.size()
-        if current_size == 0: 
+        if current_size == 0:
             return {}
         transitions_per_env = current_size
         return {f"env_{env_id}": transitions_per_env for env_id in range(self.n_envs)}
+
+
+class PrioritizedReplayBuffer(ReplayBuffer):
+    """Replay buffer with prioritized experience replay."""
+
+    def __init__(
+        self,
+        buffer_size: int,
+        observation_space: spaces.Space,
+        action_space: spaces.Space,
+        device: Union[torch.device, str] = "auto",
+        n_envs: int = 1,
+        optimize_memory_usage: bool = False,
+        alpha: float = 0.6,
+        beta: float = 0.4,
+        beta_increment: float = 1e-6,
+        epsilon: float = 1e-6,
+    ) -> None:
+        super().__init__(
+            buffer_size,
+            observation_space,
+            action_space,
+            device=device,
+            n_envs=n_envs,
+            optimize_memory_usage=optimize_memory_usage,
+        )
+
+        self.alpha = alpha
+        self.beta = beta
+        self.beta_increment = beta_increment
+        self.epsilon = epsilon
+
+        it_capacity = 1
+        while it_capacity < self.buffer_size:
+            it_capacity *= 2
+
+        self.sum_tree = SumSegmentTree(it_capacity)
+        self.min_tree = MinSegmentTree(it_capacity)
+        self.max_priority = 1.0
+
+    def add(
+        self,
+        obs: np.ndarray,
+        next_obs: np.ndarray,
+        action: np.ndarray,
+        reward: np.ndarray,
+        done: np.ndarray,
+        infos: Optional[list[dict[str, Any]]],
+    ) -> None:
+        super().add(obs, next_obs, action, reward, done, infos)
+        idx = (self.pos - 1) % self.buffer_size
+        priority = self.max_priority ** self.alpha
+        self.sum_tree[idx] = priority
+        self.min_tree[idx] = priority
+
+    def sample(
+        self, batch_size: int, env: Optional[Any] = None
+    ) -> PrioritizedReplayBufferSamples:
+        batch_indices = []
+        p_total = self.sum_tree.sum(0, self.size())
+        segment = p_total / batch_size
+        for i in range(batch_size):
+            mass = np.random.uniform(segment * i, segment * (i + 1))
+            idx = self.sum_tree.find_prefixsum_idx(mass)
+            batch_indices.append(idx)
+
+        samples = self._get_samples(np.array(batch_indices), env)
+
+        self.beta = min(1.0, self.beta + self.beta_increment)
+        total = self.sum_tree.sum()
+        min_prob = self.min_tree.min() / total
+        max_weight = (min_prob * self.size()) ** (-self.beta)
+        weights = []
+        for idx in batch_indices:
+            prob = self.sum_tree[idx] / total
+            w = (prob * self.size()) ** (-self.beta)
+            weights.append(w / max_weight)
+
+        weight_t = self.to_torch(np.array(weights).reshape(-1, 1))
+
+        return PrioritizedReplayBufferSamples(
+            samples.observations,
+            samples.actions,
+            samples.next_observations,
+            samples.dones,
+            samples.rewards,
+            weight_t,
+            np.array(batch_indices),
+        )
+
+    def update_priorities(self, indices: np.ndarray, priorities: np.ndarray) -> None:
+        for idx, priority in zip(indices, priorities):
+            assert priority > 0
+            assert 0 <= idx < self.buffer_size
+            self.sum_tree[idx] = (priority + self.epsilon) ** self.alpha
+            self.min_tree[idx] = (priority + self.epsilon) ** self.alpha
+            self.max_priority = max(self.max_priority, priority)

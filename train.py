@@ -10,6 +10,7 @@ import torch
 
 from agent import Agent
 from ppo_agent import PPOAgent
+from sac_agent import SACAgent
 from car_racing_env import CarRacingEnv
 from gymnasium.vector import AsyncVectorEnv
 from ray_env import RayVectorEnv
@@ -35,6 +36,7 @@ EXPLORATION_MAP = {
 AGENT_MAP = {
     "DQN": Agent,
     "PPO": PPOAgent,
+    "SAC": SACAgent,
 }
 
 def build_exploration_strategy(cfg, action_dim):
@@ -48,8 +50,8 @@ def build_exploration_strategy(cfg, action_dim):
     return cls(action_dim=action_dim, **params)
 
 # === 3. 평가 함수 ===
-def evaluate(agent, n_evals):
-    eval_env = CarRacingEnv()
+def evaluate(agent, n_evals, env_kwargs):
+    eval_env = CarRacingEnv(**env_kwargs)
     total_score = 0
     for i in range(n_evals):
         s, _ = eval_env.reset(seed=i)
@@ -64,19 +66,21 @@ def evaluate(agent, n_evals):
     return np.round(total_score / n_evals, 4)
 
 # === 4. 벡터 환경 생성 함수 ===
-def make_env():
+def make_env(env_kwargs):
     def _thunk():
-        return CarRacingEnv()
+        return CarRacingEnv(**env_kwargs)
     return _thunk
 
 # === 5. 메인 학습 함수 ===
 def main(config):
     os.makedirs(config["model_dir"], exist_ok=True)
 
+    env_kwargs = config.get("env", {})
+
     if config.get("use_ray", False):
         parallel_env = RayVectorEnv(config["num_envs"])
     else:
-        env_fns = [make_env() for _ in range(config["num_envs"])]
+        env_fns = [make_env(env_kwargs) for _ in range(config["num_envs"])]
         parallel_env = AsyncVectorEnv(env_fns)
 
     state_dim = parallel_env.single_observation_space.shape
@@ -97,6 +101,18 @@ def main(config):
             update_epochs=agent_cfg.get("update_epochs", 4),
             batch_size=agent_cfg.get("batch_size", 64),
         )
+    elif agent_type == "SAC":
+        agent = SACAgent(
+            observation_space=parallel_env.single_observation_space,
+            action_space=parallel_env.single_action_space,
+            lr=agent_cfg.get("lr", 3e-4),
+            gamma=agent_cfg.get("gamma", 0.99),
+            tau=agent_cfg.get("tau", 0.005),
+            alpha=agent_cfg.get("alpha", 0.2),
+            batch_size=agent_cfg.get("batch_size", 256),
+            buffer_size=agent_cfg.get("buffer_size", int(1e5)),
+            warmup_steps=agent_cfg.get("warmup_steps", 1000),
+        )
     else:
         exploration_cfg = agent_cfg.get("exploration_strategy", {})
         exploration_strategy = build_exploration_strategy(exploration_cfg, action_dim)
@@ -111,8 +127,7 @@ def main(config):
             warmup_steps=agent_cfg.get("warmup_steps", 5000),
             buffer_size=agent_cfg.get("buffer_size", int(1e5)),
             target_update_interval=agent_cfg.get("target_update_interval", 5000),
-            use_double_q=agent_cfg.get("use_double_q", False),
-            use_per=agent_cfg.get("use_per", False)
+            use_double_q=agent_cfg.get("use_double_q", False)
         )
     agent.summary()
 
@@ -124,7 +139,7 @@ def main(config):
         agent.train_epoch(parallel_env, config["epoch_steps"])
 
         if epoch % config["eval_interval"] == 0:
-            avg_return = evaluate(agent, config["eval_episodes"])
+            avg_return = evaluate(agent, config["eval_episodes"], env_kwargs)
             history["Epoch"].append(epoch)
             history["AvgReturn"].append(avg_return)
             print(f"[Epoch {epoch}] Steps: {agent.total_steps} | Eval Score: {avg_return}")
