@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import torch
 
 from agent import Agent
+from ppo_agent import PPOAgent
 from car_racing_env import CarRacingEnv
 from gymnasium.vector import AsyncVectorEnv
 from ray_env import RayVectorEnv
@@ -29,6 +30,11 @@ def load_config(path):
 EXPLORATION_MAP = {
     "EpsilonGreedy": EpsilonGreedy,
     "SoftmaxExploration": SoftmaxExploration,
+}
+
+AGENT_MAP = {
+    "DQN": Agent,
+    "PPO": PPOAgent,
 }
 
 def build_exploration_strategy(cfg, action_dim):
@@ -54,6 +60,7 @@ def evaluate(agent, n_evals):
             score += r
             done = terminated or truncated
         total_score += score
+    eval_env.close()
     return np.round(total_score / n_evals, 4)
 
 # === 4. 벡터 환경 생성 함수 ===
@@ -77,22 +84,36 @@ def main(config):
 
     # Agent 생성
     agent_cfg = config["agent"]
-    exploration_cfg = agent_cfg.get("exploration_strategy", {})
-    exploration_strategy = build_exploration_strategy(exploration_cfg, action_dim)
+    agent_type = config.get("agent_type", "DQN")
 
-    agent = Agent(
-        state_dim=state_dim,
-        action_dim=action_dim,
-        exploration_strategy=exploration_strategy,
-        lr=agent_cfg.get("lr", 0.00025),
-        gamma=agent_cfg.get("gamma", 0.99),
-        batch_size=agent_cfg.get("batch_size", 64),
-        warmup_steps=agent_cfg.get("warmup_steps", 5000),
-        buffer_size=agent_cfg.get("buffer_size", int(1e5)),
-        target_update_interval=agent_cfg.get("target_update_interval", 5000),
-        use_double_q=agent_cfg.get("use_double_q", False),
-        use_per=agent_cfg.get("use_per", False)
-    )
+    if agent_type == "PPO":
+        agent = PPOAgent(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            lr=agent_cfg.get("lr", 3e-4),
+            gamma=agent_cfg.get("gamma", 0.99),
+            gae_lambda=agent_cfg.get("gae_lambda", 0.95),
+            clip_eps=agent_cfg.get("clip_eps", 0.2),
+            update_epochs=agent_cfg.get("update_epochs", 4),
+            batch_size=agent_cfg.get("batch_size", 64),
+        )
+    else:
+        exploration_cfg = agent_cfg.get("exploration_strategy", {})
+        exploration_strategy = build_exploration_strategy(exploration_cfg, action_dim)
+
+        agent = Agent(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            exploration_strategy=exploration_strategy,
+            lr=agent_cfg.get("lr", 0.00025),
+            gamma=agent_cfg.get("gamma", 0.99),
+            batch_size=agent_cfg.get("batch_size", 64),
+            warmup_steps=agent_cfg.get("warmup_steps", 5000),
+            buffer_size=agent_cfg.get("buffer_size", int(1e5)),
+            target_update_interval=agent_cfg.get("target_update_interval", 5000),
+            use_double_q=agent_cfg.get("use_double_q", False),
+            use_per=agent_cfg.get("use_per", False)
+        )
     agent.summary()
 
     history = {"Epoch": [], "AvgReturn": []}
@@ -127,8 +148,7 @@ def main(config):
 
     torch.save(best_model, os.path.join(config["model_dir"], "best_model.pth"))
 
-    if config.get("use_ray", False):
-        parallel_env.close()
+    parallel_env.close()
 
 # === 6. Entry Point ===
 if __name__ == "__main__":

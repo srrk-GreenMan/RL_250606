@@ -79,3 +79,7 @@ class CarRacingEnv(gym.Wrapper):
         """
         img = self.env.render()
         return img
+
+    def close(self):
+        """Close the underlying environment to release memory."""
+        self.env.close()
