@@ -5,6 +5,7 @@ epoch_steps: 5000
 eval_interval: 1
 eval_episodes: 10
 model_dir: models
+agent_type: DQN
 
 agent:
   exploration_strategy:

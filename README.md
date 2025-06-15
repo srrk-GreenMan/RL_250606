@@ -1,7 +1,6 @@
-# 🏎️ CarRacing-v3 Agent with Deep Q-Learning
+# 🏎️ CarRacing-v3 Agents
 
-This project implements a Deep Q-Network (DQN) agent to solve the [CarRacing-v3](https://www.gymlibrary.dev/environments/box2d/car_racing/) environment from Gymnasium. The agent learns from pixel observations using frame stacking, reward clipping, experience replay, and softmax or epsilon-greedy exploration strategies.
-For scalable training, the code also provides an optional Ray-based vector environment.
+This project provides both a Deep Q-Network (DQN) agent and a lightweight PPO actor-critic agent. Each learns from stacked pixel observations, and training can optionally use a Ray-based vector environment.
 
 ---
 
@@ -9,11 +8,12 @@ For scalable training, the code also provides an optional Ray-based vector envir
 ```text
 .
 ├── train.py            # Main training script
-├── agent.py            # Agent logic (Deep Q-learning)
+├── agent.py            # DQN agent logic
+├── ppo_agent.py        # PPO actor-critic agent
 ├── buffer.py           # Replay buffer for experience replay
 ├── car_racing_env.py   # Preprocessing wrapper for CarRacing-v3
 ├── exploration.py      # Exploration strategies
-├── model.py            # Q-network
+├── model.py            # Networks (Q-network and Actor-Critic)
 ├── ray_env.py          # Optional Ray-based vector environment
 └── config.yaml         # Training configuration
 ```
