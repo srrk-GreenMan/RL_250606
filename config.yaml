@@ -1,4 +1,5 @@
 num_envs: 5
+use_ray: false
 num_epochs: 20
 epoch_steps: 5000
 eval_interval: 1
