@@ -11,6 +11,7 @@ import torch
 from agent import Agent
 from car_racing_env import CarRacingEnv
 from gymnasium.vector import AsyncVectorEnv
+from ray_env import RayVectorEnv
 
 from exploration import EpsilonGreedy, SoftmaxExploration
 
@@ -65,8 +66,11 @@ def make_env():
 def main(config):
     os.makedirs(config["model_dir"], exist_ok=True)
 
-    env_fns = [make_env() for _ in range(config["num_envs"])]
-    parallel_env = AsyncVectorEnv(env_fns)
+    if config.get("use_ray", False):
+        parallel_env = RayVectorEnv(config["num_envs"])
+    else:
+        env_fns = [make_env() for _ in range(config["num_envs"])]
+        parallel_env = AsyncVectorEnv(env_fns)
 
     state_dim = parallel_env.single_observation_space.shape
     action_dim = parallel_env.single_action_space.n
@@ -122,6 +126,9 @@ def main(config):
     plt.close()
 
     torch.save(best_model, os.path.join(config["model_dir"], "best_model.pth"))
+
+    if config.get("use_ray", False):
+        parallel_env.close()
 
 # === 6. Entry Point ===
 if __name__ == "__main__":
