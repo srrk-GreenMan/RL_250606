@@ -34,19 +34,16 @@ class AtariCNN(nn.Module):
         return self.linear(x)
 
 class QNetwork(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim=128):
-        super(QNetwork, self).__init__()
-        input_dim = int(np.prod(state_dim))  # For (4, 84, 84), this is 28224
+    """Deep Q-Network with an Atari-style CNN backbone."""
 
-        self.net = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, action_dim),
-        ) # [TODO] Define Q network with one hidden layer
+    def __init__(self, state_dim, action_dim):
+        super().__init__()
+        self.features = AtariCNN(state_dim)
+        self.head = nn.Linear(512, action_dim)
 
     def forward(self, x):
-        return self.net(x)
+        x = self.features(x)
+        return self.head(x)
 
 
 class ActorCritic(nn.Module):

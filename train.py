@@ -87,6 +87,9 @@ def main(config):
     set_seed(config.get("seed", 42))
 
     env_kwargs = config.get("env", {})
+    if config.get("agent_type") == "SAC":
+        # SAC requires a continuous action space
+        env_kwargs["continuous"] = True
 
     if config.get("use_ray", False):
         parallel_env = RayVectorEnv(config["num_envs"])
@@ -95,7 +98,11 @@ def main(config):
         parallel_env = AsyncVectorEnv(env_fns)
 
     state_dim = parallel_env.single_observation_space.shape
-    action_dim = parallel_env.single_action_space.n
+    action_space = parallel_env.single_action_space
+    if hasattr(action_space, "n"):
+        action_dim = action_space.n
+    else:
+        action_dim = int(np.prod(action_space.shape))
 
     # Agent 생성
     agent_cfg = config["agent"]
@@ -157,7 +164,10 @@ def main(config):
 
             if avg_return > best_return:
                 best_return = avg_return
-                best_model = agent.network.state_dict()
+                if hasattr(agent, "actor"):
+                    best_model = agent.actor.state_dict()
+                else:
+                    best_model = agent.network.state_dict()
                 print(f">>> New best model saved at epoch {epoch} with return {best_return:.2f}")
                 torch.save(best_model, os.path.join(config["model_dir"], "best_model.pth"))
 

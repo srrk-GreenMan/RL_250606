@@ -1,6 +1,6 @@
 # 🏎️ CarRacing-v3 Agents
 
-This project provides both a Deep Q-Network (DQN) agent and a lightweight PPO actor-critic agent. Each learns from stacked pixel observations, and training can optionally use a Ray-based vector environment.
+This project provides both a Deep Q-Network (DQN) agent and a lightweight PPO actor-critic agent. Each learns from stacked pixel observations, and training can optionally use a Ray-based vector environment. The DQN implementation now relies on an Atari-style CNN backbone for processing frames.
 
 ---
 
@@ -29,8 +29,12 @@ pip install swig gymnasium[box2d] imageio imageio-ffmpeg ray
 
 ### 2. Train the Agent
 
+Choose the appropriate config file for the algorithm you want to run:
+
 ```bash
-python train.py --config config.yaml
+python train.py --config dqn_config.yaml  # Deep Q-Network
+python train.py --config ppo_config.yaml  # Proximal Policy Optimization
+python train.py --config sac_config.yaml  # Soft Actor-Critic
 ```
 
 This will:
