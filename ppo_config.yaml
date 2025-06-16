@@ -6,6 +6,7 @@ eval_interval: 1
 eval_episodes: 10
 model_dir: ppo_models
 agent_type: PPO
+seed: 42
 
 env:
   continuous: false

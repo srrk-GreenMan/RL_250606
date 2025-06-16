@@ -10,12 +10,17 @@ class AtariCNN(nn.Module):
     def __init__(self, input_shape):
         super().__init__()
         c, h, w = input_shape
+        # The original DQN architecture used large strides which can discard
+        # fine-grained details.  For 84×84 inputs with 4 stacked frames we use
+        # slightly smaller strides to retain more spatial resolution.
         self.cnn = nn.Sequential(
-            nn.Conv2d(c, 32, kernel_size=8, stride=4),
+            nn.Conv2d(c, 32, kernel_size=5, stride=2),  # 84 -> 40
             nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            nn.Conv2d(32, 64, kernel_size=5, stride=2),  # 40 -> 18
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.Conv2d(64, 64, kernel_size=3, stride=2),  # 18 -> 8
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),  # 8 -> 6
             nn.ReLU(),
             nn.Flatten(),
         )
@@ -34,7 +39,7 @@ class AtariCNN(nn.Module):
         return self.linear(x)
 
 class QNetwork(nn.Module):
-    """Deep Q-Network with an Atari-style CNN backbone."""
+    """Deep Q-Network using the custom CNN feature extractor."""
 
     def __init__(self, state_dim, action_dim):
         super().__init__()

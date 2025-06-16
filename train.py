@@ -7,6 +7,8 @@ import yaml
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
+import copy
+import wandb
 
 from utils import set_seed
 
@@ -16,6 +18,7 @@ from sac_agent import SACAgent
 from car_racing_env import CarRacingEnv
 from gymnasium.vector import AsyncVectorEnv
 from ray_env import RayVectorEnv
+from ray import tune
 
 from exploration import EpsilonGreedy, SoftmaxExploration
 
@@ -39,6 +42,36 @@ AGENT_MAP = {
     "DQN": Agent,
     "PPO": PPOAgent,
     "SAC": SACAgent,
+}
+
+# Recommended hyperparameter ranges for grid search
+SEARCH_SPACE = {
+    "DQN": {
+        "lr": [1e-4, 5e-4],
+        "gamma": [0.98, 0.999],
+        "batch_size": [32, 64],
+        "warmup_steps": [5000, 10000],
+        "buffer_size": [100000, 500000],
+        "target_update_interval": [5000, 10000],
+        "use_double_q": [True, False],
+    },
+    "PPO": {
+        "lr": [1e-4, 3e-4],
+        "gamma": [0.98, 0.99],
+        "gae_lambda": [0.9, 0.95],
+        "clip_eps": [0.1, 0.2],
+        "update_epochs": [4, 10],
+        "batch_size": [32, 64],
+    },
+    "SAC": {
+        "lr": [1e-4, 3e-4],
+        "gamma": [0.98, 0.99],
+        "tau": [0.005, 0.01],
+        "alpha": [0.1, 0.2],
+        "batch_size": [256, 512],
+        "buffer_size": [100000, 1000000],
+        "warmup_steps": [1000, 5000],
+    },
 }
 
 def build_exploration_strategy(cfg, action_dim):
@@ -80,11 +113,42 @@ def make_env(env_kwargs):
         return CarRacingEnv(**env_kwargs)
     return _thunk
 
+# === 6. Hyperparameter Optimization ===
+
+def _tune_train(config, base_config=None, project=None):
+    cfg = copy.deepcopy(base_config)
+    cfg["agent"].update(config["agent"])
+    trial_name = tune.get_trial_name()
+    cfg["model_dir"] = os.path.join(base_config["model_dir"], trial_name)
+    score = main(cfg, project=project, run_name=trial_name)
+    tune.report(score=score)
+
+
+def run_hpo(base_config, project=None):
+    agent_type = base_config.get("agent_type", "DQN")
+    space = SEARCH_SPACE.get(agent_type)
+    if space is None:
+        raise ValueError(f"No search space defined for {agent_type}")
+
+    param_space = {"agent": {k: tune.grid_search(v) for k, v in space.items()}}
+
+    tuner = tune.Tuner(
+        tune.with_parameters(_tune_train, base_config=base_config, project=project),
+        param_space=param_space,
+    )
+    results = tuner.fit()
+    best = results.get_best_result(metric="score", mode="max")
+    print("Best Params", best.config["agent"], "Score", best.metrics.get("score"))
+
 # === 6. 메인 학습 함수 ===
-def main(config):
+def main(config, project=None, run_name=None):
     os.makedirs(config["model_dir"], exist_ok=True)
 
     set_seed(config.get("seed", 42))
+
+    run = None
+    if project:
+        run = wandb.init(project=project, name=run_name, config=config)
 
     env_kwargs = config.get("env", {})
     if config.get("agent_type") == "SAC":
@@ -145,7 +209,12 @@ def main(config):
             warmup_steps=agent_cfg.get("warmup_steps", 5000),
             buffer_size=agent_cfg.get("buffer_size", int(1e5)),
             target_update_interval=agent_cfg.get("target_update_interval", 5000),
-            use_double_q=agent_cfg.get("use_double_q", False)
+            use_double_q=agent_cfg.get("use_double_q", False),
+            prioritized=agent_cfg.get("prioritized", True),
+            alpha=agent_cfg.get("alpha", 0.6),
+            beta=agent_cfg.get("beta", 0.4),
+            beta_increment=agent_cfg.get("beta_increment", 1e-6),
+            epsilon=agent_cfg.get("epsilon", 1e-6),
         )
     agent.summary()
 
@@ -161,6 +230,8 @@ def main(config):
             history["Epoch"].append(epoch)
             history["AvgReturn"].append(avg_return)
             print(f"[Epoch {epoch}] Steps: {agent.total_steps} | Eval Score: {avg_return}")
+            if run:
+                wandb.log({"epoch": epoch, "avg_return": avg_return, "total_steps": agent.total_steps})
 
             if avg_return > best_return:
                 best_return = avg_return
@@ -186,12 +257,21 @@ def main(config):
     torch.save(best_model, os.path.join(config["model_dir"], "best_model.pth"))
 
     parallel_env.close()
+    if run:
+        run.finish()
+
+    return best_return
 
 # === 7. Entry Point ===
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train CarRacing Agent (Config Only)")
     parser.add_argument("--config", type=str, required=True, help="Path to config.yaml or config.json")
+    parser.add_argument("--hpo", action="store_true", help="Run hyperparameter optimization")
+    parser.add_argument("--wandb_project", type=str, default=None, help="Weights & Biases project name")
     args = parser.parse_args()
 
     config = load_config(args.config)
-    main(config)
+    if args.hpo:
+        run_hpo(config, project=args.wandb_project)
+    else:
+        main(config, project=args.wandb_project, run_name="single_run")

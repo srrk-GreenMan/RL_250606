@@ -6,6 +6,7 @@ eval_interval: 1
 eval_episodes: 10
 model_dir: dqn_models
 agent_type: DQN
+seed: 42
 
 env:
   continuous: false
@@ -24,3 +25,4 @@ agent:
   buffer_size: 100000
   target_update_interval: 10000
   use_double_q: true
+  prioritized: true
