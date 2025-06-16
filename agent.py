@@ -39,7 +39,7 @@ class Agent:
 
         obs_space = spaces.Box(low=0.0, high=1.0, shape=state_dim, dtype=np.float32)
         act_space = spaces.Discrete(action_dim)
-        self.buffer = ReplayBuffer(buffer_size, obs_space, act_space, device=self.device)
+        self.buffer = ReplayBuffer(buffer_size, obs_space, act_space, device=self.device, use_uint8=True)
 
         self.total_steps = 0
         self.exploration_strategy = exploration_strategy

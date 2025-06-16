@@ -86,7 +86,7 @@ class SACAgent:
         self.critic1_opt = torch.optim.Adam(self.critic1.parameters(), lr=lr)
         self.critic2_opt = torch.optim.Adam(self.critic2.parameters(), lr=lr)
 
-        self.buffer = ReplayBuffer(buffer_size, observation_space, action_space, device=self.device)
+        self.buffer = ReplayBuffer(buffer_size, observation_space, action_space, device=self.device, use_uint8=True)
 
     def act(self, obs, deterministic: bool = False):
         obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)

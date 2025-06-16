@@ -217,6 +217,7 @@ class ReplayBuffer(BaseBuffer):
         at a cost of more complexity.
     :param handle_timeout_termination: Handle timeout termination (due to timelimit)
         separately and treat the task as infinite horizon task.
+    :param use_uint8: Store observations using uint8 to save memory
 
     """
     def __init__(
@@ -227,25 +228,28 @@ class ReplayBuffer(BaseBuffer):
         device: Union[torch.device, str] = "auto",
         n_envs: int = 1,
         optimize_memory_usage: bool = False,
-        handle_timeout_termination: bool = True
+        handle_timeout_termination: bool = True,
+        use_uint8: bool = False,
     ):
         super().__init__(
             buffer_size, observation_space, action_space, device, n_envs=n_envs)
 
         self.buffer_size = max(buffer_size // n_envs, 1)
         self.optimize_memory_usage = optimize_memory_usage
+        self.use_uint8 = use_uint8
 
         # Check that the replay buffer can fit into the memory
         if psutil is not None:
             mem_available = psutil.virtual_memory().available
 
+        obs_dtype = np.uint8 if self.use_uint8 else np.float32
         self.observations = np.zeros(
-            (self.buffer_size, self.n_envs, *self.obs_shape), dtype=np.float32)
+            (self.buffer_size, self.n_envs, *self.obs_shape), dtype=obs_dtype)
 
         if not optimize_memory_usage:
             # When optimizing memory, `observations` contains also the next observation
             self.next_observations = np.zeros(
-                (self.buffer_size, self.n_envs, *self.obs_shape), dtype=np.float32)
+                (self.buffer_size, self.n_envs, *self.obs_shape), dtype=obs_dtype)
 
         self.actions = np.zeros(
             (self.buffer_size, self.n_envs, self.action_dim),
@@ -294,12 +298,20 @@ class ReplayBuffer(BaseBuffer):
         action = action.reshape((self.n_envs, self.action_dim))
 
         # Copy to avoid modification by reference
-        self.observations[self.pos] = np.array(obs).copy()
+        if self.use_uint8:
+            self.observations[self.pos] = (np.array(obs) * 255).astype(np.uint8)
+        else:
+            self.observations[self.pos] = np.array(obs).copy()
+
+        if self.use_uint8:
+            next_obs_stored = (np.array(next_obs) * 255).astype(np.uint8)
+        else:
+            next_obs_stored = np.array(next_obs)
 
         if self.optimize_memory_usage:
-            self.observations[(self.pos + 1) % self.buffer_size] = np.array(next_obs).copy()
+            self.observations[(self.pos + 1) % self.buffer_size] = next_obs_stored.copy()
         else:
-            self.next_observations[self.pos] = np.array(next_obs).copy()
+            self.next_observations[self.pos] = next_obs_stored.copy()
 
         self.actions[self.pos] = np.array(action).copy()
         self.rewards[self.pos] = np.array(reward).copy()
@@ -349,6 +361,9 @@ class ReplayBuffer(BaseBuffer):
             next_obs = self.next_observations[batch_inds, env_indices, :]
 
         obs = self.observations[batch_inds, env_indices, :]
+        if self.use_uint8:
+            obs = obs.astype(np.float32) / 255.0
+            next_obs = next_obs.astype(np.float32) / 255.0
 
         if isinstance(self.action_space, spaces.Discrete):
             actions = self.actions[batch_inds, env_indices].reshape(-1, 1)
