@@ -8,6 +8,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 
+from utils import set_seed
+
 from agent import Agent
 from ppo_agent import PPOAgent
 from sac_agent import SACAgent
@@ -65,15 +67,24 @@ def evaluate(agent, n_evals, env_kwargs):
     eval_env.close()
     return np.round(total_score / n_evals, 4)
 
-# === 4. 벡터 환경 생성 함수 ===
+# === 4. 기록 저장 함수 ===
+def save_history(history, model_dir):
+    """Save training history as JSON."""
+    path = os.path.join(model_dir, "history.json")
+    with open(path, "w") as f:
+        json.dump(history, f)
+
+# === 5. 벡터 환경 생성 함수 ===
 def make_env(env_kwargs):
     def _thunk():
         return CarRacingEnv(**env_kwargs)
     return _thunk
 
-# === 5. 메인 학습 함수 ===
+# === 6. 메인 학습 함수 ===
 def main(config):
     os.makedirs(config["model_dir"], exist_ok=True)
+
+    set_seed(config.get("seed", 42))
 
     env_kwargs = config.get("env", {})
 
@@ -160,12 +171,13 @@ def main(config):
     plt.tight_layout()
     plt.savefig(os.path.join(config["model_dir"], "training_curve.png"))
     plt.close()
+    save_history(history, config["model_dir"])
 
     torch.save(best_model, os.path.join(config["model_dir"], "best_model.pth"))
 
     parallel_env.close()
 
-# === 6. Entry Point ===
+# === 7. Entry Point ===
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train CarRacing Agent (Config Only)")
     parser.add_argument("--config", type=str, required=True, help="Path to config.yaml or config.json")

@@ -48,6 +48,36 @@ This will:
 ### 4. Evaluation
 - After training, the script evaluates the best model on 10 random seeds and saves the best rollout as an .mp4 file for qualitative analysis.
 
+### 5. Recommended Hyperparameters
+
+```yaml
+DQN:
+  lr: [1e-4, 5e-4]
+  gamma: [0.98, 0.999]
+  batch_size: [32, 64]
+  warmup_steps: [5000, 10000]
+  buffer_size: [100000, 500000]
+  target_update_interval: [5000, 10000]
+  use_double_q: [true, false]
+
+PPO:
+  lr: [1e-4, 3e-4]
+  gamma: [0.98, 0.99]
+  gae_lambda: [0.9, 0.95]
+  clip_eps: [0.1, 0.2]
+  update_epochs: [4, 10]
+  batch_size: [32, 64]
+
+SAC:
+  lr: [1e-4, 3e-4]
+  gamma: [0.98, 0.99]
+  tau: [0.005, 0.01]
+  alpha: [0.1, 0.2]
+  batch_size: [256, 512]
+  buffer_size: [100000, 1000000]
+  warmup_steps: [1000, 5000]
+```
+
 📌 Acknowledgments
 - Built using OpenAI Gymnasium
 - Inspired by DQN and classic Atari RL pipelines
