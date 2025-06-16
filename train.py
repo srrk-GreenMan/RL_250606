@@ -254,7 +254,7 @@ def main(config, project=None, run_name=None):
     plt.close()
     save_history(history, config["model_dir"])
 
-    torch.save(best_model, os.path.join(config["model_dir"], "best_model.pth"))
+    # torch.save(best_model, os.path.join(config["model_dir"], "best_model.pth"))
 
     parallel_env.close()
     if run:
