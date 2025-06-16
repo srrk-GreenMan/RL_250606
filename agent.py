@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from gymnasium import spaces
 
 from model import QNetwork
-from buffer import ReplayBuffer
+from buffer import ReplayBuffer, PrioritizedReplayBuffer
 from exploration import EpsilonGreedy, SoftmaxExploration
 
 class Agent:
@@ -19,7 +19,12 @@ class Agent:
         warmup_steps=5000,
         buffer_size=int(1e5),
         target_update_interval=5000,
-        use_double_q=False
+        use_double_q=False,
+        prioritized=True,
+        alpha=0.6,
+        beta=0.4,
+        beta_increment=1e-6,
+        epsilon=1e-6
     ):
         self.action_dim = action_dim
         self.gamma = gamma
@@ -27,6 +32,11 @@ class Agent:
         self.warmup_steps = warmup_steps
         self.target_update_interval = target_update_interval
         self.use_double_q = use_double_q
+        self.prioritized = prioritized
+        self.alpha = alpha
+        self.beta = beta
+        self.beta_increment = beta_increment
+        self.prioritized_epsilon = epsilon
 
         self.network = QNetwork(state_dim, action_dim)
         self.target_network = QNetwork(state_dim, action_dim)
@@ -39,7 +49,20 @@ class Agent:
 
         obs_space = spaces.Box(low=0.0, high=1.0, shape=state_dim, dtype=np.float32)
         act_space = spaces.Discrete(action_dim)
-        self.buffer = ReplayBuffer(buffer_size, obs_space, act_space, device=self.device, use_uint8=True)
+        if self.prioritized:
+            self.buffer = PrioritizedReplayBuffer(
+                buffer_size,
+                obs_space,
+                act_space,
+                device=self.device,
+                use_uint8=True,
+                alpha=alpha,
+                beta=beta,
+                beta_increment=beta_increment,
+                epsilon=epsilon,
+            )
+        else:
+            self.buffer = ReplayBuffer(buffer_size, obs_space, act_space, device=self.device, use_uint8=True)
 
         self.total_steps = 0
         self.exploration_strategy = exploration_strategy
@@ -54,6 +77,9 @@ class Agent:
         print(f"Warmup Steps: {self.warmup_steps}")
         print(f"Target Update Interval: {self.target_update_interval}")
         print(f"Double Q: {self.use_double_q}")
+        print(f"Prioritized Replay: {self.prioritized}")
+        if self.prioritized:
+            print(f"Alpha: {self.alpha}, Beta: {self.beta}")
         print("===================================")
 
     @torch.no_grad()
@@ -79,6 +105,8 @@ class Agent:
         r = samples.rewards
         s_prime = samples.next_observations
         terminated = samples.dones
+        weights = getattr(samples, "weights", None)
+        batch_indices = getattr(samples, "batch_indices", None)
 
         with torch.no_grad():
             next_q = self.target_network(s_prime)
@@ -90,11 +118,18 @@ class Agent:
             td_target = r + (1. - terminated) * self.gamma * max_next_q
 
         q_values = self.network(s).gather(1, a)
-        loss = F.mse_loss(q_values, td_target)
+        if weights is not None:
+            loss_elements = F.mse_loss(q_values, td_target, reduction="none")
+            loss = (loss_elements * weights).mean()
+        else:
+            loss = F.mse_loss(q_values, td_target)
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        if batch_indices is not None:
+            td_errors = (q_values.detach() - td_target).abs().cpu().numpy().squeeze()
+            self.buffer.update_priorities(batch_indices, td_errors + self.prioritized_epsilon)
         return {"total_steps": self.total_steps, "value_loss": loss.item()}
 
     def process(self, transition):

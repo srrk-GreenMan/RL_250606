@@ -468,6 +468,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         device: Union[torch.device, str] = "auto",
         n_envs: int = 1,
         optimize_memory_usage: bool = False,
+        use_uint8: bool = False,
         alpha: float = 0.6,
         beta: float = 0.4,
         beta_increment: float = 1e-6,
@@ -480,6 +481,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             device=device,
             n_envs=n_envs,
             optimize_memory_usage=optimize_memory_usage,
+            use_uint8=use_uint8,
         )
 
         self.alpha = alpha

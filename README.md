@@ -1,6 +1,6 @@
 # 🏎️ CarRacing-v3 Agents
 
-This project provides both a Deep Q-Network (DQN) agent and a lightweight PPO actor-critic agent. Each learns from stacked pixel observations, and training can optionally use a Ray-based vector environment. The DQN implementation now relies on an Atari-style CNN backbone for processing frames.
+This project provides both a Deep Q-Network (DQN) agent and a lightweight PPO actor-critic agent. Each learns from stacked pixel observations, and training can optionally use a Ray-based vector environment. The DQN implementation now uses a CNN tuned for 4×84×84 inputs.
 
 ---
 
@@ -24,7 +24,7 @@ This project provides both a Deep Q-Network (DQN) agent and a lightweight PPO ac
 ### 1. Install Dependencies
 
 ```bash
-pip install swig gymnasium[box2d] imageio imageio-ffmpeg ray
+pip install swig gymnasium[box2d] imageio imageio-ffmpeg ray[tune] pyyaml
 ```
 
 ### 2. Train the Agent
@@ -37,22 +37,33 @@ python train.py --config ppo_config.yaml  # Proximal Policy Optimization
 python train.py --config sac_config.yaml  # Soft Actor-Critic
 ```
 
+The DQN agent uses a prioritized replay buffer by default for more efficient learning.
+
+### 3. Hyperparameter Optimization
+
+Add `--hpo` to automatically explore recommended hyperparameters using **Ray Tune**.
+Results can be logged to Weights & Biases with `--wandb_project <project>`.
+
+```bash
+python train.py --config dqn_config.yaml --hpo --wandb_project car_racing
+```
+
 This will:
 - Train the agent using `AsyncVectorEnv` (default) or `RayVectorEnv` when `use_ray: true`
 - Evaluate the policy every epoch
 - Save the best model as `best_model` variable
 - Save a video of the best-performing episode in the `videos/` folder
 
-### 3. Environment Details
+### 4. Environment Details
 - Environment: CarRacing-v3 (discrete mode)
 - Observation: 4 stacked grayscale frames (4x84×84)
 - Action space: 5 discrete actions (left, right, gas, brake, no-op)
 - Preprocessing: crop, resize, grayscale, normalize
 
-### 4. Evaluation
+### 5. Evaluation
 - After training, the script evaluates the best model on 10 random seeds and saves the best rollout as an .mp4 file for qualitative analysis.
 
-### 5. Recommended Hyperparameters
+### 6. Recommended Hyperparameters
 
 ```yaml
 DQN:
