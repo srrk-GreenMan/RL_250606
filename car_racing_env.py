@@ -32,6 +32,14 @@ class CarRacingEnv(gym.Wrapper):
         self.initial_no_op = initial_no_op
         self.skip_frames = skip_frames
         self.stack_frames = stack_frames
+        self.continuous = continuous
+
+        # Choose the appropriate no-op action depending on action space type
+        if self.continuous:
+            # zeros for steer, gas, brake
+            self.no_op_action = np.zeros(self.env.action_space.shape, dtype=self.env.action_space.dtype)
+        else:
+            self.no_op_action = 0
 
         self.observation_space = spaces.Box(
             low=0.0,
@@ -47,7 +55,7 @@ class CarRacingEnv(gym.Wrapper):
         s, info = self.env.reset(seed=seed, options=options)
 
         for _ in range(self.initial_no_op):
-            s, _, terminated, truncated, _ = self.env.step(0)
+            s, _, terminated, truncated, _ = self.env.step(self.no_op_action)
             if terminated or truncated:
                 s, info = self.env.reset(seed=seed, options=options)
 

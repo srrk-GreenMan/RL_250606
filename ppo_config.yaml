@@ -1,0 +1,19 @@
+num_envs: 5
+use_ray: false
+num_epochs: 20
+epoch_steps: 5000
+eval_interval: 1
+eval_episodes: 10
+model_dir: ppo_models
+agent_type: PPO
+
+env:
+  continuous: false
+
+agent:
+  lr: 0.0003
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.2
+  update_epochs: 4
+  batch_size: 64

@@ -35,6 +35,16 @@ class PPOAgent:
         self.dones = []
         self.values = []
 
+    def summary(self):
+        print("=== PPOAgent Configuration Summary ===")
+        print(f"LR: {self.optimizer.param_groups[0]['lr']}")
+        print(f"Gamma: {self.gamma}")
+        print(f"GAE Lambda: {self.gae_lambda}")
+        print(f"Clip Eps: {self.clip_eps}")
+        print(f"Update Epochs: {self.update_epochs}")
+        print(f"Batch Size: {self.batch_size}")
+        print("======================================")
+
     def act(self, state):
         state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
         logits, value = self.network(state)

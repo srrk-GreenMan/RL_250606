@@ -88,6 +88,17 @@ class SACAgent:
 
         self.buffer = ReplayBuffer(buffer_size, observation_space, action_space, device=self.device, use_uint8=True)
 
+    def summary(self):
+        print("=== SACAgent Configuration Summary ===")
+        print(f"LR: {self.actor_opt.param_groups[0]['lr']}")
+        print(f"Gamma: {self.gamma}")
+        print(f"Tau: {self.tau}")
+        print(f"Alpha: {self.alpha}")
+        print(f"Batch Size: {self.batch_size}")
+        print(f"Buffer Size: {self.buffer.buffer_size}")
+        print(f"Warmup Steps: {self.warmup_steps}")
+        print("=====================================")
+
     def act(self, obs, deterministic: bool = False):
         obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         mu, log_std = self.actor(obs_t)
@@ -98,7 +109,7 @@ class SACAgent:
             dist = Normal(mu, std)
             z = dist.sample()
             action = torch.tanh(z)
-        return action.cpu().numpy()[0]
+        return action.detach().cpu().numpy()[0]
 
     def select_best_action(self, obs):
         return self.act(obs, deterministic=True)
