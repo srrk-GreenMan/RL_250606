@@ -19,6 +19,7 @@ from car_racing_env import CarRacingEnv
 from gymnasium.vector import AsyncVectorEnv
 from ray_env import RayVectorEnv
 from ray import tune
+from ray.tune import session
 
 from exploration import EpsilonGreedy, SoftmaxExploration
 
@@ -118,7 +119,7 @@ def make_env(env_kwargs):
 def _tune_train(config, base_config=None, project=None):
     cfg = copy.deepcopy(base_config)
     cfg["agent"].update(config["agent"])
-    trial_name = tune.get_trial_name()
+    trial_name = session.get_trial_name()
     cfg["model_dir"] = os.path.join(base_config["model_dir"], trial_name)
     score = main(cfg, project=project, run_name=trial_name)
     tune.report(score=score)
