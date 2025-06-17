@@ -48,9 +48,16 @@ AGENT_MAP = {
 # Recommended hyperparameter ranges for grid search
 SEARCH_SPACE = {
     "DQN": {
-        "lr": tune.loguniform(1e-4, 5e-4),
-        "gamma": tune.uniform(0.98, 0.999),
-        "batch_size": tune.choice([32, 64]),
+        "lr": tune.loguniform(1e-4, 1e-3),
+        "batch_size": tune.choice([16, 32, 64, 128],
+        "use_double_q": tune.choice([True, False]),
+        "exploration_strategy": {
+            "name": "SoftmaxExploration",
+            "params": {
+                "temperature_min": tune.loguniform(0.001, 0.1),
+                "decay_steps": tune.randint(5000, 30001),
+            }
+        }
     },
     "PPO": {
         "lr": [1e-4, 3e-4],
