@@ -138,9 +138,15 @@ def run_hpo(base_config, project=None):
     if resources:
         trainable = tune.with_resources(trainable, resources=resources)
 
+    max_concurrent = base_config.get("max_concurrent_trials")
+    tune_cfg = None
+    if max_concurrent:
+        tune_cfg = tune.TuneConfig(max_concurrent_trials=max_concurrent)
+
     tuner = tune.Tuner(
         trainable,
         param_space=param_space,
+        tune_config=tune_cfg,
     )
     results = tuner.fit()
     best = results.get_best_result(metric="score", mode="max")
