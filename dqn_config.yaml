@@ -1,6 +1,6 @@
 num_envs: 5
 use_ray: false
-num_epochs: 20
+num_epochs: 10
 epoch_steps: 5000
 eval_interval: 1
 eval_episodes: 10
@@ -27,7 +27,7 @@ agent:
   lr: 0.0001
   gamma: 0.99
   batch_size: 32
-  warmup_steps: 5000
+  warmup_steps: 500
   buffer_size: 100000
   target_update_interval: 1
   use_double_q: true
