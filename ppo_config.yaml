@@ -8,6 +8,11 @@ model_dir: ppo_models
 agent_type: PPO
 seed: 42
 
+# Resources for Ray Tune trials (optional)
+resources_per_trial:
+  cpu: 1
+  gpu: 0
+
 env:
   continuous: false
 
