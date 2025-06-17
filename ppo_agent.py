@@ -34,6 +34,9 @@ class PPOAgent:
         self.rewards = []
         self.dones = []
         self.values = []
+        
+        # Add total_steps tracking
+        self.total_steps = 0
 
     def summary(self):
         print("=== PPOAgent Configuration Summary ===")
@@ -114,6 +117,7 @@ class PPOAgent:
         states, _ = env.reset(seed=42)
         num_envs = env.num_envs
         step_count = 0
+        
         while step_count < epoch_steps:
             actions = []
             log_probs = []
@@ -131,11 +135,14 @@ class PPOAgent:
 
             states = next_states
             step_count += num_envs
+            # Update total_steps
+            self.total_steps += num_envs
 
             if np.any(dones):
                 last_vals = [self.network(torch.from_numpy(states[i]).float().unsqueeze(0).to(self.device))[1].item() for i in range(num_envs)]
                 s, a, log_p, ret, adv = self.finish_path(np.mean(last_vals))
                 self.update(s, a, log_p, ret, adv)
+                
         # after loop handle leftover steps
         last_vals = [self.network(torch.from_numpy(states[i]).float().unsqueeze(0).to(self.device))[1].item() for i in range(num_envs)]
         s, a, log_p, ret, adv = self.finish_path(np.mean(last_vals))
