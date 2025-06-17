@@ -133,15 +133,24 @@ def _tune_train(config, base_config=None, project=None):
     score = main(cfg, project=project, run_name=trial_name)
     tune.report(score=score)
 
-
 def run_hpo(base_config, project=None):
     agent_type = base_config.get("agent_type", "DQN")
     space = SEARCH_SPACE.get(agent_type)
     if space is None:
         raise ValueError(f"No search space defined for {agent_type}")
 
-    # tune.choice로 변환
-    param_space = {"agent": {k: tune.choice(v) for k, v in space.items()}}
+    # 따로 복사해서 처리
+    agent_space = {}
+    for k, v in space.items():
+        if isinstance(v, list):
+            agent_space[k] = tune.choice(v)
+        elif isinstance(v, dict):
+            # 예: exploration_strategy 처리
+            agent_space[k] = v
+        else:
+            agent_space[k] = v
+
+    param_space = {"agent": agent_space}
 
     resources = base_config.get("resources_per_trial")
     trainable = tune.with_parameters(_tune_train, base_config=base_config, project=project)
@@ -152,7 +161,7 @@ def run_hpo(base_config, project=None):
 
     tune_cfg = tune.TuneConfig(
         search_alg=search_alg,
-        num_samples=30,  # 꼭 지정하세요!
+        num_samples=30,
         max_concurrent_trials=base_config.get("max_concurrent_trials"),
     )
 
@@ -164,7 +173,6 @@ def run_hpo(base_config, project=None):
     results = tuner.fit()
     best = results.get_best_result(metric="score", mode="max")
     print("Best Params", best.config["agent"], "Score", best.metrics.get("score"))
-
 
 # === 6. 메인 학습 함수 ===
 def main(config, project=None, run_name=None):
