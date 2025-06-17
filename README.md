@@ -24,7 +24,7 @@ This project provides both a Deep Q-Network (DQN) agent and a lightweight PPO ac
 ### 1. Install Dependencies
 
 ```bash
-pip install swig gymnasium[box2d] imageio imageio-ffmpeg ray[tune] pyyaml
+pip install swig gymnasium[box2d] imageio imageio-ffmpeg ray[tune] pyyaml optuna
 ```
 
 ### 2. Train the Agent
