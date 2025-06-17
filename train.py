@@ -131,7 +131,7 @@ def _tune_train(config, base_config=None, project=None):
     trial_name = generate_trial_name(config)
     cfg["model_dir"] = os.path.join(base_config["model_dir"], trial_name)
     score = main(cfg, project=project, run_name=trial_name)
-    tune.report(score=score)
+    tune.report({"score": score})
 
 def run_hpo(base_config, project=None):
     agent_type = base_config.get("agent_type", "DQN")
@@ -157,11 +157,11 @@ def run_hpo(base_config, project=None):
     if resources:
         trainable = tune.with_resources(trainable, resources=resources)
 
-    search_alg = OptunaSearch(metric="score", mode="max")
+    search_alg = OptunaSearch(metric="score", mode="max", seed=42)
 
     tune_cfg = tune.TuneConfig(
         search_alg=search_alg,
-        num_samples=30,
+        num_samples=40,
         max_concurrent_trials=base_config.get("max_concurrent_trials"),
     )
 
