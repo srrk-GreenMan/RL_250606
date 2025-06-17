@@ -9,9 +9,10 @@ agent_type: SAC
 seed: 42
 
 # Resources for Ray Tune trials (optional)
+max_concurrent_trials: 4
 resources_per_trial:
-  cpu: 1
-  gpu: 0
+  cpu: 5
+  gpu: 0.15
 
 env:
   continuous: true

@@ -43,12 +43,13 @@ The DQN agent uses a prioritized replay buffer by default for more efficient lea
 
 Add `--hpo` to automatically explore recommended hyperparameters using **Ray Tune**.
 Results can be logged to Weights & Biases with `--wandb_project <project>`.
-Resource allocation for each Tune trial can be adjusted via a `resources_per_trial` section in the config file.
+Resource allocation for each Tune trial can be adjusted via a `resources_per_trial` section in the config file. Concurrency can also be limited with `max_concurrent_trials`.
 
 ```yaml
+max_concurrent_trials: 4
 resources_per_trial:
-  cpu: 1
-  gpu: 0
+  cpu: 5
+  gpu: 0.15
 ```
 
 ```bash
