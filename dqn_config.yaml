@@ -12,7 +12,7 @@ seed: 42
 max_concurrent_trials: 4
 resources_per_trial:
   cpu: 5
-  gpu: 0.15
+  gpu: 0.10
 
 env:
   continuous: false
