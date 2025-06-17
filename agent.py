@@ -142,7 +142,10 @@ class Agent:
             result = self.learn()
 
         if self.total_steps % self.target_update_interval == 0:
-            self.target_network.load_state_dict(self.network.state_dict())
+            tau = 0.005
+            for target_param, online_param in zip(self.target_network.parameters(), self.network.parameters()):
+                target_param.data.copy_(tau * online_param.data + (1.0 - tau) * target_param.data)
+                #self.target_network.load_state_dict(self.network.state_dict())
 
         self.exploration_strategy.update(self.total_steps)
         return result
