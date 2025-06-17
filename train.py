@@ -133,8 +133,13 @@ def run_hpo(base_config, project=None):
 
     param_space = {"agent": {k: tune.grid_search(v) for k, v in space.items()}}
 
+    resources = base_config.get("resources_per_trial")
+    trainable = tune.with_parameters(_tune_train, base_config=base_config, project=project)
+    if resources:
+        trainable = tune.with_resources(trainable, resources=resources)
+
     tuner = tune.Tuner(
-        tune.with_parameters(_tune_train, base_config=base_config, project=project),
+        trainable,
         param_space=param_space,
     )
     results = tuner.fit()
