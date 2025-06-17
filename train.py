@@ -19,9 +19,9 @@ from car_racing_env import CarRacingEnv
 from gymnasium.vector import AsyncVectorEnv
 from ray_env import RayVectorEnv
 from ray import tune
-from ray.tune import session
-
 from exploration import EpsilonGreedy, SoftmaxExploration
+from ray.tune.search.optuna import OptunaSearch
+
 
 # === 1. Config 로딩 ===
 def load_config(path):
@@ -48,13 +48,9 @@ AGENT_MAP = {
 # Recommended hyperparameter ranges for grid search
 SEARCH_SPACE = {
     "DQN": {
-        "lr": [1e-4, 5e-4],
-        "gamma": [0.98, 0.999],
-        "batch_size": [32, 64],
-        "warmup_steps": [5000, 10000],
-        "buffer_size": [100000, 500000],
-        "target_update_interval": [5000, 10000],
-        "use_double_q": [True, False],
+        "lr": tune.loguniform(1e-4, 5e-4),
+        "gamma": tune.uniform(0.98, 0.999),
+        "batch_size": tune.choice([32, 64]),
     },
     "PPO": {
         "lr": [1e-4, 3e-4],
@@ -114,12 +110,18 @@ def make_env(env_kwargs):
         return CarRacingEnv(**env_kwargs)
     return _thunk
 
+
+def generate_trial_name(config):
+    agent_params = config.get("agent", {})
+    name_parts = [f"{k}_{v}" for k, v in sorted(agent_params.items())]
+    return "trial_" + "_".join(name_parts)
+
 # === 6. Hyperparameter Optimization ===
 
 def _tune_train(config, base_config=None, project=None):
     cfg = copy.deepcopy(base_config)
     cfg["agent"].update(config["agent"])
-    trial_name = session.get_trial_name()
+    trial_name = generate_trial_name(config)
     cfg["model_dir"] = os.path.join(base_config["model_dir"], trial_name)
     score = main(cfg, project=project, run_name=trial_name)
     tune.report(score=score)
@@ -131,17 +133,21 @@ def run_hpo(base_config, project=None):
     if space is None:
         raise ValueError(f"No search space defined for {agent_type}")
 
-    param_space = {"agent": {k: tune.grid_search(v) for k, v in space.items()}}
+    # tune.choice로 변환
+    param_space = {"agent": {k: tune.choice(v) for k, v in space.items()}}
 
     resources = base_config.get("resources_per_trial")
     trainable = tune.with_parameters(_tune_train, base_config=base_config, project=project)
     if resources:
         trainable = tune.with_resources(trainable, resources=resources)
 
-    max_concurrent = base_config.get("max_concurrent_trials")
-    tune_cfg = None
-    if max_concurrent:
-        tune_cfg = tune.TuneConfig(max_concurrent_trials=max_concurrent)
+    search_alg = OptunaSearch(metric="score", mode="max")
+
+    tune_cfg = tune.TuneConfig(
+        search_alg=search_alg,
+        num_samples=30,  # 꼭 지정하세요!
+        max_concurrent_trials=base_config.get("max_concurrent_trials"),
+    )
 
     tuner = tune.Tuner(
         trainable,
@@ -151,6 +157,7 @@ def run_hpo(base_config, project=None):
     results = tuner.fit()
     best = results.get_best_result(metric="score", mode="max")
     print("Best Params", best.config["agent"], "Score", best.metrics.get("score"))
+
 
 # === 6. 메인 학습 함수 ===
 def main(config, project=None, run_name=None):
