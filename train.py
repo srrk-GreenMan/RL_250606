@@ -49,7 +49,7 @@ AGENT_MAP = {
 SEARCH_SPACE = {
     "DQN": {
         "lr": tune.loguniform(1e-4, 1e-3),
-        "batch_size": tune.choice([16, 32, 64, 128],
+        "batch_size": tune.choice([16, 32, 64, 128]),
         "use_double_q": tune.choice([True, False]),
         "exploration_strategy": {
             "name": "SoftmaxExploration",
