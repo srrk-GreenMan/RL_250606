@@ -34,7 +34,7 @@ class PPOAgent:
         self.rewards = []
         self.dones = []
         self.values = []
-        
+
         # Add total_steps tracking
         self.total_steps = 0
 
@@ -71,7 +71,9 @@ class PPOAgent:
         self.values.append(value)
 
     def finish_path(self, last_value=0):
-        states = torch.tensor(self.states, dtype=torch.float32).to(self.device)
+
+        states = torch.from_numpy(np.stack(self.states)).float().to(self.device)
+        #states = torch.tensor(self.states, dtype=torch.float32).to(self.device)
         actions = torch.tensor(self.actions).to(self.device)
         log_probs = torch.tensor(self.log_probs).to(self.device)
         values = torch.tensor(self.values + [last_value]).to(self.device)
@@ -117,7 +119,6 @@ class PPOAgent:
         states, _ = env.reset(seed=42)
         num_envs = env.num_envs
         step_count = 0
-        
         while step_count < epoch_steps:
             actions = []
             log_probs = []
@@ -139,11 +140,81 @@ class PPOAgent:
             self.total_steps += num_envs
 
             if np.any(dones):
-                last_vals = [self.network(torch.from_numpy(states[i]).float().unsqueeze(0).to(self.device))[1].item() for i in range(num_envs)]
+                if len(self.states) >= self.batch_size:
+                    print(f" Episode ended, updating with {len(self.states)} experiences")
+                last_vals = []
+                for i in range(num_envs):
+                    with torch.no_grad():
+                        state_tensor = torch.from_numpy(states[i]).float().unsqueeze(0).to(self.device)
+                        _, last_val = self.network(state_tensor)
+                        last_vals.append(last_val.item())
                 s, a, log_p, ret, adv = self.finish_path(np.mean(last_vals))
-                self.update(s, a, log_p, ret, adv)
-                
+                if len(s) > 0:
+                    self.update(s, a, log_p, ret, adv)
+
         # after loop handle leftover steps
-        last_vals = [self.network(torch.from_numpy(states[i]).float().unsqueeze(0).to(self.device))[1].item() for i in range(num_envs)]
-        s, a, log_p, ret, adv = self.finish_path(np.mean(last_vals))
-        return self.update(s, a, log_p, ret, adv)
+        if len(self.states) > 0:
+            print(f"Epoch ended, final update with {len(self.states)} remaining experiences")
+
+            last_vals = []
+            for i in range(num_envs):
+                with torch.no_grad():
+                    state_tensor = torch.from_numpy(states[i]).float().unsqueeze(0).to(self.device)
+                    _, last_val = self.network(state_tensor)
+                    last_vals.append(last_val.item())
+
+            s, a, log_p, ret, adv = self.finish_path(np.mean(last_vals))
+            if len(s) > 0:
+                last_losses = self.update(s, a, log_p, ret, adv)
+        else:
+            print('warning: No experiences collected during this epoch!')
+            last_losses = {"policy_loss": 0.0, "value_loss": 0.0}
+        return last_losses
+
+    def analyze_action_distribution(self, env, num_steps=200):
+        """현재 정책의 액션 분포 분석"""
+        states, _ = env.reset()
+        action_counts = np.zeros(env.single_action_space.n)
+        entropy_sum = 0.0
+
+        print("=== Action Distribution Analysis ===")
+
+        for step in range(num_steps):
+            actions = []
+            entropies = []
+
+            for i in range(env.num_envs):
+                # 정책의 확률 분포 직접 확인
+                state = torch.from_numpy(states[i]).float().unsqueeze(0).to(self.device)
+                logits, _ = self.network(state)
+                dist = Categorical(logits=logits)
+
+                action = dist.sample()
+                actions.append(action.item())
+                action_counts[action.item()] += 1
+                entropies.append(dist.entropy().item())
+
+            entropy_sum += np.mean(entropies)
+            states, _, _, _, _ = env.step(actions)
+
+    # 결과 출력
+        total_actions = num_steps * env.num_envs
+        print("Action probabilities:")
+        for i, count in enumerate(action_counts):
+            prob = count / total_actions
+            print(f"  Action {i}: {prob:.3f} ({int(count)} times)")
+
+        avg_entropy = entropy_sum / num_steps
+        print(f"Average entropy: {avg_entropy:.3f}")
+
+    # 문제 진단
+        if avg_entropy < 0.5:
+            print("⚠️  LOW ENTROPY: Policy is too deterministic!")
+            print("   → Increase entropy coefficient in loss function")
+
+        max_prob = max(action_counts) / total_actions
+        if max_prob > 0.8:
+            print(f"⚠️  DOMINANT ACTION: Action dominates {max_prob:.1%}")
+            print("   → Policy is stuck, increase exploration")
+
+        return action_counts, avg_entropy
