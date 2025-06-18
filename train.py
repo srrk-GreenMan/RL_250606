@@ -257,13 +257,16 @@ def main(config, project=None, run_name=None):
     best_model = None
 
     for epoch in range(1, config["num_epochs"] + 1):
-        agent.train_epoch(parallel_env, config["epoch_steps"])
+        losses = agent.train_epoch(parallel_env, config["epoch_steps"])
 
         if epoch % config["eval_interval"] == 0:
             avg_return = evaluate(agent, config["eval_episodes"], env_kwargs)
             history["Epoch"].append(epoch)
             history["AvgReturn"].append(avg_return)
             print(f"[Epoch {epoch}] Steps: {agent.total_steps} | Eval Score: {avg_return}")
+            print(f"  └─ Policy Loss: {losses.get('policy_loss', 'N/A'):.4f}")
+            print(f"  └─ Value Loss: {losses.get('value_loss', 'N/A'):.4f}")
+            agent.analyze_action_distribution(parallel_env, 100)
             if run:
                 wandb.log({"epoch": epoch, "avg_return": avg_return, "total_steps": agent.total_steps})
 
