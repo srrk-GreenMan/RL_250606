@@ -161,7 +161,7 @@ def run_hpo(base_config, project=None):
 
     tune_cfg = tune.TuneConfig(
         search_alg=search_alg,
-        num_samples=40,
+        num_samples=2,
         max_concurrent_trials=base_config.get("max_concurrent_trials"),
     )
 
@@ -172,6 +172,8 @@ def run_hpo(base_config, project=None):
     )
     results = tuner.fit()
     best = results.get_best_result(metric="score", mode="max")
+    import pdb
+    pdb.set_trace()
     print("Best Params", best.config["agent"], "Score", best.metrics.get("score"))
 
 # === 6. 메인 학습 함수 ===
@@ -264,9 +266,10 @@ def main(config, project=None, run_name=None):
             history["Epoch"].append(epoch)
             history["AvgReturn"].append(avg_return)
             print(f"[Epoch {epoch}] Steps: {agent.total_steps} | Eval Score: {avg_return}")
-            print(f"  └─ Policy Loss: {losses.get('policy_loss', 'N/A'):.4f}")
-            print(f"  └─ Value Loss: {losses.get('value_loss', 'N/A'):.4f}")
-            agent.analyze_action_distribution(parallel_env, 100)
+            if agent_type == "PPO":
+                print(f"  └─ Policy Loss: {losses.get('policy_loss', 'N/A'):.4f}")
+                print(f"  └─ Value Loss: {losses.get('value_loss', 'N/A'):.4f}")
+                agent.analyze_action_distribution(parallel_env, 100)
             if run:
                 wandb.log({"epoch": epoch, "avg_return": avg_return, "total_steps": agent.total_steps})
 
