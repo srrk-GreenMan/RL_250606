@@ -161,7 +161,7 @@ def run_hpo(base_config, project=None):
 
     tune_cfg = tune.TuneConfig(
         search_alg=search_alg,
-        num_samples=2,
+        num_samples=100,
         max_concurrent_trials=base_config.get("max_concurrent_trials"),
     )
 
